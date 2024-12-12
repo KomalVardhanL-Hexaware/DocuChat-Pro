@@ -59,7 +59,7 @@ def create_qa_chain(vectorstore):
 
 # Streamlit UI
 def main():
-    st.title("📄 RAG QA Bot with Streamlit UI")
+    st.title("📄 DocuChat Pro: Multi-Format Document Interaction Hub")
 
     # Sidebar for document management
     st.sidebar.title("Upload Documents")
