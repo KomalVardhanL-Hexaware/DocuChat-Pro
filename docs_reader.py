@@ -2,13 +2,47 @@ import os
 import streamlit as st
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
-from langchain.document_loaders import PyPDFLoader, TextLoader, CSVLoader
+from langchain.document_loaders import PyPDFLoader, TextLoader
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
+import sqlparse
+from langchain.schema import Document
+import pandas as pd
 
 # Load environment variables
 load_dotenv()
+
+# Custom SQL Loader
+class SQLLoader:
+    def __init__(self, file_path):
+        self.file_path = file_path
+
+    def load(self):
+        with open(self.file_path, 'r') as file:
+            content = file.read()
+        # Parse the SQL content
+        parsed = sqlparse.parse(content)
+        # Convert parsed SQL statements to a list of documents
+        documents = [Document(page_content=str(statement)) for statement in parsed]
+        return documents
+
+# Custom CSV Loader using pandas
+class CSVLoader:
+    def __init__(self, file_path):
+        self.file_path = file_path
+
+    def load(self):
+        encodings = ['utf-8', 'latin1', 'iso-8859-1']
+        for encoding in encodings:
+            try:
+                df = pd.read_csv(self.file_path, encoding=encoding)
+                # Convert DataFrame to a list of documents
+                documents = [Document(page_content=df.to_string(index=False))]
+                return documents
+            except Exception as e:
+                st.sidebar.warning(f"Error loading CSV file with encoding {encoding}: {str(e)}")
+        raise Exception(f"Error loading CSV file: Unable to decode with any of the tried encodings.")
 
 # Utility functions
 def load_and_split_document(file_path, file_extension):
@@ -20,6 +54,8 @@ def load_and_split_document(file_path, file_extension):
             loader = TextLoader(file_path)
         elif file_extension == '.csv':
             loader = CSVLoader(file_path)
+        elif file_extension == '.sql':
+            loader = SQLLoader(file_path)
         else:
             return None, f"Unsupported file type: {file_extension}"
 
@@ -28,13 +64,13 @@ def load_and_split_document(file_path, file_extension):
         texts = text_splitter.split_documents(documents)
         return texts, None
     except Exception as e:
-        return None, str(e)
+        return None, f"Error loading {file_path}: {str(e)}"
 
 def create_vector_store(texts):
     try:
         # Use Azure OpenAI Embeddings
         embeddings = AzureOpenAIEmbeddings(
-            deployment=os.getenv('AZURE_OPENAI_EMBEDDING_DEPLOYMENT'),
+            deployment="text-embedding-3-large",
         )
         vectorstore = FAISS.from_documents(texts, embeddings)
         return vectorstore, None
@@ -46,7 +82,7 @@ def create_qa_chain(vectorstore):
         from langchain.chat_models import AzureChatOpenAI
         # Use Azure-specific configuration
         llm = AzureChatOpenAI(
-            model=os.getenv('AZURE_OPENAI_DEPLOYMENT'),
+            model="gpt-4o",
         )
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
@@ -59,7 +95,54 @@ def create_qa_chain(vectorstore):
 
 # Streamlit UI
 def main():
-    st.title("📄 DocuChat Pro: Multi-Format Document Interaction Hub")
+    st.markdown(
+        """
+        <style>
+        .main .block-container {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            padding-left: 2rem;
+            padding-right: 2rem;
+            background-color: #f0f8ff;
+        }
+        .sidebar .sidebar-content {
+            background-color: #e6f7ff;
+        }
+        .stButton>button {
+            background-color: #4CAF50;
+            color: white;
+            height: 3em;
+            width: 100%;
+            border-radius: 5px;
+            border: 2px solid #008CBA;
+            font-size: 20px;
+        }
+        .stTextInput>div>div>input {
+            background-color: black;
+            border: 2px solid #008CBA;
+            border-radius: 5px;
+            font-size: 20px;
+        }
+        .stChatMessage {
+            background-color: black;
+            border: 2px solid #008CBA;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px;
+            text-align: center;
+            border-radius: 5px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown('<div class="header"><h1>📄 DocuChat Pro: Multi-Format Document Interaction Hub</h1></div>', unsafe_allow_html=True)
 
     # Sidebar for document management
     st.sidebar.title("Upload Documents")
@@ -117,7 +200,7 @@ def main():
                     st.markdown(user_question)
                     st.session_state.messages.append({"role": "user", "content": user_question})
 
-                with st.chat_message("assistant"):
+                with st.chat_message("DocuChat Pro"):
                     with st.spinner("Generating response..."):
                         try:
                             response = qa_chain.invoke(user_question)
